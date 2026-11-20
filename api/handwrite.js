@@ -1,5 +1,5 @@
 // ============================================================================
-// DARK EMPIRE TEXT-TO-REAL HANDWRITING API — v4.0 API-ONLY (PNG + MULTI-PAGE PDF)
+// DARK EMPIRE TEXT-TO-REAL HANDWRITING API — v4.1 SCANNED & HARDENED
 // Power By Dark Empire || Owner Sardar Daud Arain
 // Engine: OpenType.js Vector Paths + Sharp C++ Native Pipeline
 // ============================================================================
@@ -11,18 +11,18 @@ const BRANDING_TEXT = 'Power By Dark Empire || Owner Sardar Daud Arain';
 const BRANDING_JSON = Object.freeze({
   power_by: 'Dark Empire',
   owner: 'Sardar Daud Arain',
-  version: '4.0-API-ONLY'
+  version: '4.1-SCANNED'
 });
 
-const FONT_URLS = Object.freeze({
-  kalam: 'https://raw.githubusercontent.com/google/fonts/main/ofl/kalam/Kalam-Regular.ttf',
-  caveat: 'https://raw.githubusercontent.com/google/fonts/main/ofl/caveat/static/Caveat-Regular.ttf',
-  indie: 'https://raw.githubusercontent.com/google/fonts/main/ofl/indieflower/IndieFlower-Regular.ttf',
-  shadows: 'https://raw.githubusercontent.com/google/fonts/main/ofl/shadowsintolight/ShadowsIntoLight.ttf',
-  patrick: 'https://raw.githubusercontent.com/google/fonts/main/ofl/patrickhand/PatrickHand-Regular.ttf',
-  dancing: 'https://raw.githubusercontent.com/google/fonts/main/ofl/dancingscript/static/DancingScript-Regular.ttf',
-  architects: 'https://raw.githubusercontent.com/google/fonts/main/ofl/architectsdaughter/ArchitectsDaughter-Regular.ttf',
-  homemade: 'https://raw.githubusercontent.com/google/fonts/main/apache/homemadeapple/HomemadeApple-Regular.ttf'
+const FONT_FAMILIES = Object.freeze({
+  kalam: 'Kalam',
+  caveat: 'Caveat',
+  indie: 'Indie+Flower',
+  shadows: 'Shadows+Into+Light',
+  patrick: 'Patrick+Hand',
+  dancing: 'Dancing+Script',
+  architects: 'Architects+Daughter',
+  homemade: 'Homemade+Apple'
 });
 
 const PEN_TYPES = Object.freeze({
@@ -69,7 +69,9 @@ function sanitizeColor(color) {
 function resolveInkColor(inkInput) {
   if (!inkInput) return INK_COLORS.blue;
   const clean = String(inkInput).trim().toLowerCase();
-  if (INK_COLORS[clean]) return INK_COLORS[clean];
+  if (Object.prototype.hasOwnProperty.call(INK_COLORS, clean)) {
+    return INK_COLORS[clean];
+  }
   if (/^#[0-9a-f]{6}$/i.test(clean)) return clean;
   return INK_COLORS.blue;
 }
@@ -79,15 +81,33 @@ function jitter(range) {
 }
 
 async function loadFont(style = 'kalam') {
-  const key = Object.prototype.hasOwnProperty.call(FONT_URLS, style) ? style : 'kalam';
+  const key = Object.prototype.hasOwnProperty.call(FONT_FAMILIES, style) ? style : 'kalam';
   if (fontCache.has(key)) return fontCache.get(key);
 
-  const res = await fetch(FONT_URLS[key], { signal: AbortSignal.timeout(7000) });
-  if (!res.ok) {
-    throw new Error(`Font (${key}) load nahi ho saka. Dobara try karein.`);
+  const family = FONT_FAMILIES[key];
+  const cssUrl = `https://fonts.googleapis.com/css2?family=${family}&display=swap`;
+
+  const cssRes = await fetch(cssUrl, {
+    headers: { 'User-Agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.0)' },
+    signal: AbortSignal.timeout(7000)
+  });
+
+  if (!cssRes.ok) {
+    throw new Error(`Font (${key}) CSS load nahi ho saka.`);
   }
 
-  const arrayBuf = await res.arrayBuffer();
+  const cssText = await cssRes.text();
+  const match = cssText.match(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+\.ttf)\)/i);
+  if (!match || !match[1]) {
+    throw new Error(`Font (${key}) ka TTF link nahi mila.`);
+  }
+
+  const fontRes = await fetch(match[1], { signal: AbortSignal.timeout(7000) });
+  if (!fontRes.ok) {
+    throw new Error(`Font (${key}) download nahi ho saka.`);
+  }
+
+  const arrayBuf = await fontRes.arrayBuffer();
   const parsed = opentype.parse(arrayBuf);
   if (!parsed || typeof parsed.getPath !== 'function') {
     throw new Error(`Invalid font data (${key}).`);
@@ -258,12 +278,11 @@ async function renderPageBuffer({
   return pipeline.png({ compressionLevel: 6 }).toBuffer();
 }
 
-// Build a clean multi-page PDF embedding JPEG-compressed page images for fast size & speed
 async function buildMultiPagePdf(pngBuffers, pageWidthPt = 595, pageHeightPt = 842) {
   const jpegPages = await Promise.all(
     pngBuffers.map((buf) =>
       sharp(buf)
-        .jpeg({ quality: 86, mozjpeg: true })
+        .jpeg({ quality: 86 })
         .toBuffer()
     )
   );
@@ -283,28 +302,19 @@ async function buildMultiPagePdf(pngBuffers, pageWidthPt = 595, pageHeightPt = 8
     offset += buf.length;
   }
 
-  // Object numbering:
-  // 1: Catalog, 2: Pages, then for each page k (0..N-1):
-  //   pageObjId = 3 + k * 3
-  //   contentObjId = 4 + k * 3
-  //   imgObjId = 5 + k * 3
   const pageCount = jpegPages.length;
-  const pageIds = [];
   const kidsRefs = [];
 
   for (let i = 0; i < pageCount; i++) {
     const pId = 3 + i * 3;
-    pageIds.push(pId);
     kidsRefs.push(`${pId} 0 R`);
   }
 
   pushStr('%PDF-1.4\n');
 
-  // Obj 1: Catalog
   offsets[1] = offset;
   pushStr('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
 
-  // Obj 2: Pages
   offsets[2] = offset;
   pushStr(`2 0 obj\n<< /Type /Pages /Kids [ ${kidsRefs.join(' ')} ] /Count ${pageCount} >>\nendobj\n`);
 
@@ -314,7 +324,6 @@ async function buildMultiPagePdf(pngBuffers, pageWidthPt = 595, pageHeightPt = 8
     const imId = 5 + i * 3;
     const jpgBuf = jpegPages[i];
 
-    // Page object
     offsets[pId] = offset;
     pushStr(
       `${pId} 0 obj\n` +
@@ -323,7 +332,6 @@ async function buildMultiPagePdf(pngBuffers, pageWidthPt = 595, pageHeightPt = 8
       `/Contents ${cId} 0 R >>\nendobj\n`
     );
 
-    // Content stream drawing full-page image
     const streamCmd = `q ${pageWidthPt} 0 0 ${pageHeightPt} 0 0 cm /Im${i} Do Q\n`;
     offsets[cId] = offset;
     pushStr(
@@ -332,7 +340,6 @@ async function buildMultiPagePdf(pngBuffers, pageWidthPt = 595, pageHeightPt = 8
       `endstream\nendobj\n`
     );
 
-    // Image XObject
     offsets[imId] = offset;
     pushStr(
       `${imId} 0 obj\n` +
@@ -375,7 +382,7 @@ export default async function handler(req, res) {
       api_name: 'Dark Empire Text-to-Real Handwriting API',
       engine: 'OpenType.js Vector + Sharp C++ Native',
       options: {
-        fonts: Object.keys(FONT_URLS),
+        fonts: Object.keys(FONT_FAMILIES),
         pen_types: Object.keys(PEN_TYPES),
         inks: Object.keys(INK_COLORS),
         papers: Object.keys(PAPER_THEMES),
@@ -431,7 +438,7 @@ export default async function handler(req, res) {
     }
 
     const requestedFont = String(body.font || body.style || 'kalam').toLowerCase().trim();
-    const fontName = Object.prototype.hasOwnProperty.call(FONT_URLS, requestedFont) ? requestedFont : 'kalam';
+    const fontName = Object.prototype.hasOwnProperty.call(FONT_FAMILIES, requestedFont) ? requestedFont : 'kalam';
 
     const requestedPen = String(body.pen_type || 'ballpoint').toLowerCase().trim();
     const penType = Object.prototype.hasOwnProperty.call(PEN_TYPES, requestedPen) ? requestedPen : 'ballpoint';
@@ -505,7 +512,7 @@ export default async function handler(req, res) {
         ink: inkColor,
         paper: paperType,
         total_pages: totalPages,
-        size_kb: Math.round(pdfBuffer.length / 1024),
+        size_kb: Math.max(1, Math.round(pdfBuffer.length / 1024)),
         process_time_ms: Date.now() - startTime,
         download_options: downloadOptions,
         pdf_base64: pdfBase64,
@@ -542,5 +549,4 @@ export default async function handler(req, res) {
       branding: BRANDING_JSON
     });
   }
-  }
-          
+}
