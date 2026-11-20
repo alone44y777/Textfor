@@ -1,5 +1,5 @@
 // ============================================================================
-// DARK EMPIRE TEXT-TO-REAL HANDWRITING API — v4.1 SCANNED & HARDENED
+// DARK EMPIRE TEXT-TO-REAL HANDWRITING API — v4.2 DUAL-CDN HARDENED
 // Power By Dark Empire || Owner Sardar Daud Arain
 // Engine: OpenType.js Vector Paths + Sharp C++ Native Pipeline
 // ============================================================================
@@ -11,7 +11,7 @@ const BRANDING_TEXT = 'Power By Dark Empire || Owner Sardar Daud Arain';
 const BRANDING_JSON = Object.freeze({
   power_by: 'Dark Empire',
   owner: 'Sardar Daud Arain',
-  version: '4.1-SCANNED'
+  version: '4.2-HARDENED'
 });
 
 const FONT_FAMILIES = Object.freeze({
@@ -23,6 +23,17 @@ const FONT_FAMILIES = Object.freeze({
   dancing: 'Dancing+Script',
   architects: 'Architects+Daughter',
   homemade: 'Homemade+Apple'
+});
+
+const FONTSOURCE_SLUGS = Object.freeze({
+  kalam: 'kalam',
+  caveat: 'caveat',
+  indie: 'indie-flower',
+  shadows: 'shadows-into-light',
+  patrick: 'patrick-hand',
+  dancing: 'dancing-script',
+  architects: 'architects-daughter',
+  homemade: 'homemade-apple'
 });
 
 const PEN_TYPES = Object.freeze({
@@ -84,30 +95,40 @@ async function loadFont(style = 'kalam') {
   const key = Object.prototype.hasOwnProperty.call(FONT_FAMILIES, style) ? style : 'kalam';
   if (fontCache.has(key)) return fontCache.get(key);
 
-  const family = FONT_FAMILIES[key];
-  const cssUrl = `https://fonts.googleapis.com/css2?family=${family}&display=swap`;
+  let arrayBuf = null;
 
-  const cssRes = await fetch(cssUrl, {
-    headers: { 'User-Agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.0)' },
-    signal: AbortSignal.timeout(7000)
-  });
+  // 1. Primary: Google Fonts CDN (curl User-Agent returns direct .ttf URL)
+  try {
+    const family = FONT_FAMILIES[key];
+    const cssUrl = `https://fonts.googleapis.com/css2?family=${family}&display=swap`;
+    const cssRes = await fetch(cssUrl, {
+      headers: { 'User-Agent': 'curl/8.0.0' },
+      signal: AbortSignal.timeout(7000)
+    });
 
-  if (!cssRes.ok) {
-    throw new Error(`Font (${key}) CSS load nahi ho saka.`);
+    if (cssRes.ok) {
+      const cssText = await cssRes.text();
+      const match = cssText.match(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+\.(?:ttf|otf|woff))\)/i);
+      if (match && match[1]) {
+        const fontRes = await fetch(match[1], { signal: AbortSignal.timeout(7000) });
+        if (fontRes.ok) arrayBuf = await fontRes.arrayBuffer();
+      }
+    }
+  } catch {
+    // Fallback par jayega
   }
 
-  const cssText = await cssRes.text();
-  const match = cssText.match(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+\.ttf)\)/i);
-  if (!match || !match[1]) {
-    throw new Error(`Font (${key}) ka TTF link nahi mila.`);
+  // 2. Backup Fallback: jsDelivr Fontsource CDN (.ttf)
+  if (!arrayBuf) {
+    const slug = FONTSOURCE_SLUGS[key] || 'kalam';
+    const cdnUrl = `https://cdn.jsdelivr.net/fontsource/fonts/${slug}@latest/latin-400-normal.ttf`;
+    const cdnRes = await fetch(cdnUrl, { signal: AbortSignal.timeout(7000) });
+    if (!cdnRes.ok) {
+      throw new Error(`Font (${key}) dono servers se load nahi ho saka.`);
+    }
+    arrayBuf = await cdnRes.arrayBuffer();
   }
 
-  const fontRes = await fetch(match[1], { signal: AbortSignal.timeout(7000) });
-  if (!fontRes.ok) {
-    throw new Error(`Font (${key}) download nahi ho saka.`);
-  }
-
-  const arrayBuf = await fontRes.arrayBuffer();
   const parsed = opentype.parse(arrayBuf);
   if (!parsed || typeof parsed.getPath !== 'function') {
     throw new Error(`Invalid font data (${key}).`);
