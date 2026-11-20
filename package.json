@@ -1,0 +1,9 @@
+{
+  "name": "dark-empire-handwriting-api",
+  "version": "4.0.0",
+  "type": "module",
+  "dependencies": {
+    "opentype.js": "^1.3.4",
+    "sharp": "^0.33.5"
+  }
+}
